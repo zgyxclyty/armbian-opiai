@@ -219,10 +219,9 @@ function opiai__prepare_release_artifacts() {
 	opiai__validate_standard_linux_image "${kernel_image}" || return 1
 	opiai__require_file "${download_dir}/${dtb_name}" || return 1
 	local dtb_file="${download_dir}/${dtb_name}"
-	if [[ -n "${OPIAI_RAM_SIZE:-}" ]]; then
-		# Never modify the downloaded/local input: it can be reused for another
-		# RAM SKU or board in the next build.
-		dtb_file="${download_dir}/ram-${OPIAI_RAM_SIZE}/${dtb_name}"
+	if [[ "${dtb_name}" == "hi1910B-orangepiaipro8t.dtb" ]]; then
+		# Package the 16 GiB fix without modifying the downloaded/local input.
+		dtb_file="${download_dir}/ram-16/${dtb_name}"
 		opiai__configure_8t_memory "${download_dir}/${dtb_name}" "${dtb_file}" || return 1
 	fi
 	modules_deb="$(opiai__find_release_deb "${tag}" "linux-modules-" "${download_dir}")"
@@ -250,22 +249,10 @@ function opiai__prepare_release_artifacts() {
 
 function opiai__configure_8t_memory() {
 	local source_dtb="${1}" target_dtb="${2}"
-	local size_hi size_lo node
+	local node
 
-	if [[ "$(opiai__dtb_name)" != "hi1910B-orangepiaipro8t.dtb" ]]; then
-		exit_with_error "OPIAI_RAM_SIZE is only supported for Orange Pi AI Pro 8T" "${BOOT_FDT_FILE:-unset}"
-		return 1
-	fi
-	# Match the upstream 20T fix: 2 GiB low RAM, 512 MiB TS RAM,
-	# then the remaining RAM at 0x20a0000000 (outside the TS bank).
-	case "${OPIAI_RAM_SIZE:-}" in
-		8) size_hi=1; size_lo=60000000 ;;
-		16) size_hi=3; size_lo=60000000 ;;
-		*)
-			exit_with_error "Unsupported Orange Pi AI Pro 8T RAM size" "Use OPIAI_RAM_SIZE=8 or 16 (GiB)"
-			return 1
-			;;
-	esac
+	# Fixed 16 GiB, following the upstream 20T layout: 2 GiB low RAM,
+	# 512 MiB TS RAM and 13.5 GiB high RAM. Only for 16 GiB 8T boards.
 	# Fail on an incompatible upstream layout rather than adding memory nodes.
 	for node in /memory0@numa0 /memory1@numa0; do
 		if [[ "$(fdtget -t s "${source_dtb}" "${node}" device_type)" != memory ]]; then
@@ -280,8 +267,8 @@ function opiai__configure_8t_memory() {
 	run_host_command_logged mkdir -p "$(dirname "${target_dtb}")" || return 1
 	run_host_command_logged cp -f "${source_dtb}" "${target_dtb}" || return 1
 	run_host_command_logged fdtput -t x "${target_dtb}" /memory0@numa0 reg 0 0 0 80000000 || return 1
-	run_host_command_logged fdtput -t x "${target_dtb}" /memory1@numa0 reg 20 a0000000 "${size_hi}" "${size_lo}" || return 1
-	display_alert "Configured Orange Pi AI Pro 8T RAM" "${OPIAI_RAM_SIZE} GiB" "info"
+	run_host_command_logged fdtput -t x "${target_dtb}" /memory1@numa0 reg 20 a0000000 3 60000000 || return 1
+	display_alert "Configured Orange Pi AI Pro 8T RAM" "16 GiB" "info"
 }
 
 function opiai__build_kernel_image_deb() {
